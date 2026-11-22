@@ -1,0 +1,765 @@
+import storage from './storage.js';
+
+// --- API Base URL Configuration ---
+export const API_BASE_URL = 'http://localhost:5000/api/v1';
+
+// Toggle demo mode fallback when server cannot be reached
+const DEMO_MODE = false;
+
+const INITIAL_DEMO_PROFILES = [
+  { _id: 'prof-self-01', name: 'Arjun Rao', relationship: 'self', access_level: 'owner', is_primary: true, age: 48, blood_group: 'B+' },
+  { _id: 'prof-fam-02', name: 'Lakshmi Rao', relationship: 'mother', access_level: 'caregiver_edit', is_primary: false, age: 72, blood_group: 'O+' },
+  { _id: 'prof-fam-03', name: 'Kavita Rao', relationship: 'spouse', access_level: 'caregiver_edit', is_primary: false, age: 46, blood_group: 'A+' },
+  { _id: 'prof-fam-04', name: 'Rohan Rao', relationship: 'child', access_level: 'caregiver_view', is_primary: false, age: 14, blood_group: 'B+' }
+];
+
+const INITIAL_DEMO_CABINETS = [
+  {
+    _id: 'cab-01',
+    name: 'Fever & Pain Relief',
+    medical_condition: 'Fever',
+    condition_code: 'fever',
+    time_slot: 'Morning',
+    medicines_count: 2,
+    stock_status: { in_stock: 1, few_left: 1, out_of_stock: 0 },
+    medicines: [
+      {
+        _id: 'med-01',
+        name: 'Dolo 650',
+        brand_name: 'Dolo 650',
+        generic_name: 'Paracetamol',
+        salt_composition: 'Paracetamol IP 650mg',
+        strength: '650mg',
+        dosage_form: 'tablet',
+        quantity: 12,
+        stock_threshold: 4,
+        category: 'Common',
+        usedFor: 'Fever, headache, general body aches',
+        cautions: 'Take after meals. Max 4 doses in 24 hours.',
+        entered_by_role: 'pharmacist',
+        entered_by_label: 'Entered by Pharmacist',
+        field_sources: {
+          name: 'scanned',
+          salt_composition: 'database',
+          expiry_date: 'scanned',
+          batch_number: 'scanned',
+          quantity: 'manual'
+        },
+        initial_audit_stamp: {
+          timestamp: new Date(Date.now() - 7 * 86400000).toISOString(),
+          location_name: 'Apollo Pharmacy Central, Bangalore'
+        }
+      },
+      {
+        _id: 'med-02',
+        name: 'Combiflam',
+        brand_name: 'Combiflam',
+        generic_name: 'Ibuprofen + Paracetamol',
+        salt_composition: 'Ibuprofen 400mg + Paracetamol 325mg',
+        strength: '400mg/325mg',
+        dosage_form: 'tablet',
+        quantity: 3,
+        stock_threshold: 5,
+        category: 'Common',
+        usedFor: 'Severe dental or muscle pain',
+        cautions: 'Do not take on empty stomach.',
+        entered_by_role: 'doctor',
+        entered_by_label: 'Entered by Doctor',
+        field_sources: {
+          name: 'database',
+          salt_composition: 'database',
+          expiry_date: 'manual',
+          batch_number: 'manual',
+          quantity: 'manual'
+        },
+        initial_audit_stamp: {
+          timestamp: new Date(Date.now() - 5 * 86400000).toISOString(),
+          location_name: 'Fortis Hospital Clinic, Bangalore'
+        }
+      }
+    ]
+  },
+  {
+    _id: 'cab-02',
+    name: 'Chronic Blood Pressure',
+    medical_condition: 'Blood Pressure',
+    condition_code: 'bp',
+    time_slot: 'Morning',
+    medicines_count: 1,
+    stock_status: { in_stock: 0, few_left: 0, out_of_stock: 1 },
+    medicines: [
+      {
+        _id: 'med-03',
+        name: 'Telma 40',
+        brand_name: 'Telma 40',
+        generic_name: 'Telmisartan',
+        salt_composition: 'Telmisartan IP 40mg',
+        strength: '40mg',
+        dosage_form: 'tablet',
+        quantity: 0,
+        stock_threshold: 6,
+        category: 'Chronic',
+        usedFor: 'Hypertension management',
+        cautions: 'Take consistently every morning.',
+        entered_by_role: 'doctor',
+        entered_by_label: 'Entered by Doctor',
+        field_sources: {
+          name: 'database',
+          salt_composition: 'database',
+          expiry_date: 'manual',
+          batch_number: 'manual',
+          quantity: 'manual'
+        },
+        initial_audit_stamp: {
+          timestamp: new Date(Date.now() - 15 * 86400000).toISOString(),
+          location_name: 'Manipal Cardiology, Bangalore'
+        }
+      }
+    ]
+  }
+];
+
+let cachedCabinets = null;
+let cachedProfiles = null;
+let cachedDraft = null;
+let cachedOrders = [];
+
+async function getDemoProfiles() {
+  if (cachedProfiles) return cachedProfiles;
+  try {
+    const raw = await storage.getItem('meditrace_demo_profiles');
+    if (raw) {
+      cachedProfiles = JSON.parse(raw);
+      if (Array.isArray(cachedProfiles)) return cachedProfiles;
+    }
+  } catch (_e) {}
+  cachedProfiles = [...INITIAL_DEMO_PROFILES];
+  return cachedProfiles;
+}
+
+async function getDemoCabinets() {
+  if (cachedCabinets) return cachedCabinets;
+  try {
+    const raw = await storage.getItem('meditrace_demo_cabinets');
+    if (raw) {
+      cachedCabinets = JSON.parse(raw);
+      if (Array.isArray(cachedCabinets)) return cachedCabinets;
+    }
+  } catch (_e) {}
+  cachedCabinets = [...INITIAL_DEMO_CABINETS];
+  return cachedCabinets;
+}
+
+async function saveDemoCabinets(list) {
+  cachedCabinets = list;
+  try {
+    await storage.setItem('meditrace_demo_cabinets', JSON.stringify(list));
+  } catch (_e) {}
+}
+
+export const ABDM_MOBILE_REGISTRY = {
+  '8901086001234': {
+    abdm_drug_code: 'IN-NHA-DRG-8901086',
+    name: 'Dolo 650',
+    generic_name: 'Paracetamol',
+    salt_composition: 'Paracetamol IP 650mg',
+    dosageForm: 'tablet',
+    strength: '650mg',
+    therapeutic_class: 'Analgesic & Antipyretic',
+    schedule_classification: 'OTC',
+    schedule_warning: 'Caution: Max 4g Paracetamol daily to protect liver.',
+    cdsco_approval_status: 'Approved - CDSCO National Formulary (NLEM Essential)',
+    storage_guidelines: 'Store below 25°C. Protect from moisture.',
+    dosage_instructions: '1 tablet every 6 to 8 hours as needed.',
+    manufacturer: 'Micro Labs Limited',
+    batchNumber: 'B240918',
+    expiryDate: '2027-04-30',
+    verified: true
+  },
+  '8901234567890': {
+    abdm_drug_code: 'IN-NHA-DRG-8901117',
+    name: 'Augmentin 625 Duo',
+    generic_name: 'Amoxicillin + Potassium Clavulanate',
+    salt_composition: 'Amoxicillin IP 500mg + Clavulanate Potassium IP 125mg',
+    dosageForm: 'tablet',
+    strength: '625mg',
+    therapeutic_class: 'Beta-Lactam Antibacterial',
+    schedule_classification: 'Schedule H1',
+    schedule_warning: 'Schedule H1: Dangerous without medical supervision.',
+    cdsco_approval_status: 'Approved - CDSCO National Formulary (NLEM Essential)',
+    storage_guidelines: 'Store in airtight blister pack below 25°C.',
+    dosage_instructions: '1 tablet twice daily with food.',
+    manufacturer: 'GlaxoSmithKline Pharmaceuticals Ltd.',
+    batchNumber: 'AUG-8812',
+    expiryDate: '2026-11-30',
+    verified: true
+  }
+};
+
+export const DEMO_HEALTHCARE_PLACES = [
+  {
+    _id: 'fac-1',
+    name: 'Apollo Pharmacy 24/7 Indiranagar',
+    type: 'chemist',
+    phone: '+91 80 2525 1122',
+    emergency_phone: '+91 80 2525 1123',
+    opening_hours: '24 Hours Open',
+    is_emergency_24x7: true,
+    distanceKm: 0.8,
+    address: { street: '12th Main, HAL 2nd Stage, Indiranagar', city: 'Bangalore' },
+    coordinates: { latitude: 12.9784, longitude: 77.6408 },
+    google_maps_url: 'https://www.google.com/maps/dir/?api=1&destination=12.9784,77.6408',
+    services: ['Prescription Medicines', '24x7 Delivery', 'Insulin Storage']
+  },
+  {
+    _id: 'fac-2',
+    name: 'Manipal Hospital HAL Airport Road (Trauma)',
+    type: 'hospital',
+    phone: '+91 80 2502 4444',
+    emergency_phone: '+91 80 2502 3333',
+    opening_hours: '24/7 Emergency & ICU',
+    is_emergency_24x7: true,
+    distanceKm: 2.1,
+    address: { street: '98 Old Airport Road, Kodihalli', city: 'Bangalore' },
+    coordinates: { latitude: 12.9592, longitude: 77.6515 },
+    google_maps_url: 'https://www.google.com/maps/dir/?api=1&destination=12.9592,77.6515',
+    services: ['24/7 Level 1 Trauma', 'Cardiac CCU', 'Blood Bank', 'Dialysis']
+  },
+  {
+    _id: 'fac-3',
+    name: 'MedPlus Pharmacy & Wellness',
+    type: 'chemist',
+    phone: '+91 80 2520 8899',
+    opening_hours: '08:00 AM - 11:00 PM',
+    is_emergency_24x7: false,
+    distanceKm: 1.4,
+    address: { street: '100ft Road, HAL 2nd Stage', city: 'Bangalore' },
+    coordinates: { latitude: 12.9720, longitude: 77.6420 },
+    google_maps_url: 'https://www.google.com/maps/dir/?api=1&destination=12.9720,77.6420',
+    services: ['Generic Medicines', 'Home Delivery', 'Health Checks']
+  }
+];
+
+export const DEMO_SHOP_PRODUCTS = [
+  {
+    _id: 'shop-1',
+    medicineId: 'med-01',
+    name: 'Dolo 650 (Paracetamol IP 650mg)',
+    price: 32.50,
+    mrp: 35.00,
+    dosageForm: 'tablet',
+    brandName: 'Dolo 650',
+    manufacturer: 'Micro Labs Ltd',
+    packSize: '15 Tablets Strip',
+    inStock: true,
+    requiresPrescription: false,
+    retailer: { _id: 'ret-1', name: 'Apollo Pharmacy Indiranagar', address: 'HAL 2nd Stage' }
+  },
+  {
+    _id: 'shop-2',
+    medicineId: 'med-03',
+    name: 'Telma 40 (Telmisartan IP 40mg)',
+    price: 185.00,
+    mrp: 210.00,
+    dosageForm: 'tablet',
+    brandName: 'Telma 40',
+    manufacturer: 'Glenmark Pharmaceuticals',
+    packSize: '15 Tablets Strip',
+    inStock: true,
+    requiresPrescription: true,
+    retailer: { _id: 'ret-1', name: 'Apollo Pharmacy Indiranagar', address: 'HAL 2nd Stage' }
+  },
+  {
+    _id: 'shop-3',
+    medicineId: 'med-02',
+    name: 'Combiflam (Ibuprofen 400mg + Paracetamol 325mg)',
+    price: 45.00,
+    mrp: 52.00,
+    dosageForm: 'tablet',
+    brandName: 'Combiflam',
+    manufacturer: 'Sanofi India Ltd',
+    packSize: '20 Tablets Strip',
+    inStock: true,
+    requiresPrescription: false,
+    retailer: { _id: 'ret-2', name: 'MedPlus Pharmacy', address: '100ft Road' }
+  }
+];
+
+async function handleDemoRequest(method, endpoint, options) {
+  // Auth
+  if (endpoint.includes('/auth/login') || endpoint.includes('/auth/register')) {
+    const parsed = options.body ? JSON.parse(options.body) : {};
+    return {
+      success: true,
+      data: {
+        accessToken: 'demo-jwt-token-v3',
+        user: { _id: 'u-01', name: parsed.name || 'Arjun Rao', email: parsed.email || 'arjun@meditrace.health', role: parsed.role || 'patient' }
+      }
+    };
+  }
+
+  // Profiles
+  if (endpoint.startsWith('/profiles')) {
+    const profiles = await getDemoProfiles();
+    if (method === 'GET') {
+      return { success: true, data: { profiles } };
+    }
+    if (method === 'POST') {
+      const parsed = options.body ? JSON.parse(options.body) : {};
+      const newP = {
+        _id: 'prof-' + Date.now(),
+        name: parsed.name,
+        relationship: parsed.relationship || 'other',
+        access_level: parsed.access_level || 'caregiver_view',
+        age: parsed.age || 30,
+        blood_group: parsed.blood_group || 'O+'
+      };
+      profiles.push(newP);
+      return { success: true, data: { profile: newP } };
+    }
+  }
+
+  // Cabinets & Catalogs
+  if (endpoint.startsWith('/cabinets') || endpoint.startsWith('/catalogs')) {
+    const cabinets = await getDemoCabinets();
+    if (method === 'GET') {
+      return { success: true, data: { cabinets, data: cabinets } };
+    }
+    if (method === 'POST') {
+      const parsed = options.body ? JSON.parse(options.body) : {};
+      const newCab = {
+        _id: 'cab-' + Date.now(),
+        name: parsed.name || 'New Cabinet',
+        medical_condition: parsed.medical_condition || parsed.name || 'General',
+        condition_code: (parsed.medical_condition || 'general').toLowerCase().replace(/\s+/g, '_'),
+        time_slot: parsed.time_slot || 'Morning',
+        medicines_count: 0,
+        stock_status: { in_stock: 0, few_left: 0, out_of_stock: 0 },
+        medicines: []
+      };
+      cabinets.unshift(newCab);
+      await saveDemoCabinets(cabinets);
+      return { success: true, data: { cabinet: newCab } };
+    }
+  }
+
+  // Prescriptions
+  if (endpoint.startsWith('/prescriptions')) {
+    if (method === 'POST') {
+      const parsed = options.body ? JSON.parse(options.body) : {};
+      const cabinets = await getDemoCabinets();
+      const targetCab = cabinets.find(c => c._id === parsed.cabinet_id) || cabinets[0];
+      if (targetCab) {
+        if (!targetCab.prescriptions) targetCab.prescriptions = [];
+        targetCab.prescriptions.push({
+          _id: 'presc-' + Date.now(),
+          doctor_name: parsed.doctor_name || 'Dr. Sharma',
+          diagnosis: parsed.diagnosis || '',
+          notes: parsed.notes || '',
+          created_at: new Date().toISOString()
+        });
+        await saveDemoCabinets(cabinets);
+      }
+      return { success: true, message: 'Prescription recorded successfully', data: { prescription: parsed } };
+    }
+    return { success: true, data: { prescriptions: [] } };
+  }
+
+  // Medicines
+  if (endpoint.startsWith('/medicines')) {
+    const cabinets = await getDemoCabinets();
+    const allMeds = cabinets.flatMap(c => c.medicines || []);
+
+    if (endpoint.includes('/dose-history')) {
+      const days = [];
+      const now = new Date();
+      for (let i = 1; i <= 30; i++) {
+        const dStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+        days.push({
+          date: dStr,
+          status: i % 7 === 0 ? 'missed' : i > now.getDate() ? 'upcoming' : 'taken',
+          doses: [
+            { dose_id: `d-${i}`, scheduled_time: `${dStr}T08:00:00Z`, status: i % 7 === 0 ? 'missed' : i > now.getDate() ? 'upcoming' : 'taken', dose_amount: '1 tablet' }
+          ]
+        });
+      }
+      return {
+        success: true,
+        data: {
+          month: '2026-11',
+          days,
+          summary: { total_scheduled: 30, total_taken: 26, total_missed: 4, adherence_rate: 87 }
+        }
+      };
+    }
+
+    if (endpoint.includes('/revisions')) {
+      return {
+        success: true,
+        data: {
+          revisions: [
+            {
+              revision_number: 1,
+              action_label: 'Added by Pharmacist',
+              editor_name: 'Pooja Verma (Pharmacist)',
+              editor_role: 'pharmacist',
+              created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
+              audit_stamp: {
+                timestamp: new Date(Date.now() - 7 * 86400000).toISOString(),
+                location_name: 'Apollo Central, Bangalore',
+                latitude: 12.9784,
+                longitude: 77.6408
+              },
+              field_sources: { name: 'scanned', salt_composition: 'database', expiry_date: 'scanned' }
+            },
+            {
+              revision_number: 2,
+              action_label: 'Edited by Patient',
+              editor_name: 'Arjun Rao (Patient)',
+              editor_role: 'patient',
+              created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+              audit_stamp: {
+                timestamp: new Date(Date.now() - 2 * 86400000).toISOString(),
+                location_name: 'Indiranagar, Bangalore',
+                latitude: 12.9784,
+                longitude: 77.6408
+              },
+              changed_fields: ['cautions', 'nickname'],
+              new_values: { cautions: 'Take with warm water after breakfast' }
+            }
+          ]
+        }
+      };
+    }
+
+    if (method === 'GET') {
+      return { success: true, data: { medicines: allMeds } };
+    }
+
+    if (method === 'POST') {
+      const parsed = options.body ? JSON.parse(options.body) : {};
+      const newMed = {
+        _id: 'med-' + Date.now(),
+        name: parsed.name,
+        brand_name: parsed.name,
+        salt_composition: parsed.salt_composition || 'Active Compound IP',
+        strength: parsed.strength || '500mg',
+        dosage_form: parsed.dosage_form || 'tablet',
+        quantity: Number(parsed.quantity) || 10,
+        stock_threshold: Number(parsed.stock_threshold) || 4,
+        category: parsed.category || 'Common',
+        usedFor: parsed.usedFor || '',
+        cautions: parsed.cautions || '',
+        entered_by_role: parsed.entered_by_role || 'pharmacist',
+        entered_by_label: parsed.entered_by_label || 'Entered by Pharmacist',
+        field_sources: parsed.field_sources || {
+          name: 'scanned',
+          salt_composition: 'database',
+          expiry_date: 'manual',
+          batch_number: 'manual',
+          quantity: 'manual'
+        },
+        initial_audit_stamp: {
+          timestamp: new Date().toISOString(),
+          location_name: 'Bangalore Medical Store'
+        }
+      };
+
+      const targetCabId = parsed.cabinet_id || parsed.catalog_id;
+      let targetCab = cabinets.find(c => c._id === targetCabId);
+      if (!targetCab && cabinets.length > 0) targetCab = cabinets[0];
+
+      if (targetCab) {
+        if (!targetCab.medicines) targetCab.medicines = [];
+        targetCab.medicines.push(newMed);
+        targetCab.medicines_count = targetCab.medicines.length;
+
+        // Recalculate stock counters
+        let inStock = 0, fewLeft = 0, outStock = 0;
+        targetCab.medicines.forEach(m => {
+          if (m.quantity <= 0) outStock++;
+          else if (m.quantity <= (m.stock_threshold || 4)) fewLeft++;
+          else inStock++;
+        });
+        targetCab.stock_status = { in_stock: inStock, few_left: fewLeft, out_of_stock: outStock };
+
+        await saveDemoCabinets(cabinets);
+      }
+      return { success: true, data: { medicine: newMed } };
+    }
+  }
+
+  // Scan & Draft
+  if (endpoint.startsWith('/scan')) {
+    if (endpoint.includes('/draft')) {
+      if (method === 'GET') return { success: true, data: { draft: cachedDraft } };
+      if (method === 'POST') {
+        cachedDraft = options.body ? JSON.parse(options.body) : null;
+        return { success: true, message: 'Draft saved' };
+      }
+      if (method === 'DELETE') {
+        cachedDraft = null;
+        return { success: true, message: 'Draft cleared' };
+      }
+    }
+
+    if (endpoint.includes('/two-sided') || endpoint.includes('/image')) {
+      return {
+        success: true,
+        data: {
+          quality_report: { pass: true, quality_score: 94 },
+          detected_fields: {
+            name: 'Dolo 650',
+            salt_composition: 'Paracetamol IP 650mg',
+            expiry_date: '2027-04-30',
+            batch_number: 'B240918',
+            manufacturer: 'Micro Labs Limited',
+            dosage_form: 'tablet',
+            strength: '650mg'
+          },
+          field_sources: {
+            name: 'scanned',
+            salt_composition: 'database',
+            expiry_date: 'scanned',
+            batch_number: 'scanned',
+            manufacturer: 'scanned'
+          },
+          drug_match: ABDM_MOBILE_REGISTRY['8901086001234']
+        }
+      };
+    }
+  }
+
+  // Chatbot
+  if (endpoint.startsWith('/chatbot/message')) {
+    const parsed = options.body ? JSON.parse(options.body) : {};
+    const text = (parsed.message || '').toLowerCase();
+    let reply = "Here is what I found in your records:";
+    let toolCards = [];
+
+    if (text.includes('stock') || text.includes('refill') || text.includes('low') || text.includes('out')) {
+      reply = "Telma 40 is currently Out of Stock (0 tablets remaining). Combiflam has Few Left (3 tablets remaining). I recommend refilling them soon.";
+      toolCards = [
+        { type: 'stock_warning', medicine_name: 'Telma 40', status: 'Out of Stock', remaining: 0, action: 'Buy Refill' },
+        { type: 'stock_warning', medicine_name: 'Combiflam', status: 'Few Left', remaining: 3, action: 'Buy Refill' }
+      ];
+    } else if (text.includes('cabinet') || text.includes('cold') || text.includes('fever')) {
+      reply = "You have 2 active cabinets: 'Fever & Pain Relief' with 2 medicines and 'Chronic Blood Pressure' with 1 medicine.";
+      toolCards = [
+        { type: 'cabinet_card', name: 'Fever & Pain Relief', condition: 'Fever', count: 2 },
+        { type: 'cabinet_card', name: 'Chronic Blood Pressure', condition: 'Blood Pressure', count: 1 }
+      ];
+    } else {
+      reply = "I can help you review your active cabinets, check current stock levels, trace medicine revision audit histories, or review your monthly adherence calendar. What would you like to check?";
+    }
+
+    return {
+      success: true,
+      data: {
+        reply,
+        tool_cards: toolCards,
+        disclaimer: "I am an AI assistant, not a doctor or pharmacist. I can provide general medicine-related information and help you understand your records, but I cannot diagnose medical conditions or prescribe treatment. Always consult a qualified healthcare professional before making medical decisions."
+      }
+    };
+  }
+
+  // Dose Take / Skip
+  if (endpoint.includes('/doses/') && endpoint.endsWith('/take')) {
+    const cabinets = await getDemoCabinets();
+    // Decrement stock for the first in-stock medicine
+    if (cabinets.length > 0 && cabinets[0].medicines?.length > 0) {
+      const med = cabinets[0].medicines[0];
+      if (med.quantity > 0) med.quantity -= 1;
+      let inStock = 0, fewLeft = 0, outStock = 0;
+      cabinets[0].medicines.forEach(m => {
+        if (m.quantity <= 0) outStock++;
+        else if (m.quantity <= (m.stock_threshold || 4)) fewLeft++;
+        else inStock++;
+      });
+      cabinets[0].stock_status = { in_stock: inStock, few_left: fewLeft, out_of_stock: outStock };
+      await saveDemoCabinets(cabinets);
+    }
+    return { success: true, message: 'Dose marked as taken and stock updated.' };
+  }
+
+  // Schedule
+  if (endpoint.startsWith('/schedule/today')) {
+    return {
+      success: true,
+      data: {
+        totalDoses: 3,
+        takenCount: 2,
+        pendingCount: 1,
+        doses: [
+          { _id: 'd-1', medicine: { name: 'Dolo 650', strength: '650mg' }, scheduled_time: new Date().setHours(8, 0, 0, 0), status: 'taken', food_instruction: 'after_food' },
+          { _id: 'd-2', medicine: { name: 'Telma 40', strength: '40mg' }, scheduled_time: new Date().setHours(8, 0, 0, 0), status: 'taken', food_instruction: 'after_food' },
+          { _id: 'd-3', medicine: { name: 'Combiflam', strength: '400mg' }, scheduled_time: new Date().setHours(20, 0, 0, 0), status: 'pending', food_instruction: 'after_food' }
+        ]
+      }
+    };
+  }
+
+  // Places / Healthcare Facilities
+  if (endpoint.startsWith('/chemists/nearby') || endpoint.startsWith('/places/nearby')) {
+    return { success: true, data: { facilities: DEMO_HEALTHCARE_PLACES, chemists: DEMO_HEALTHCARE_PLACES } };
+  }
+
+  // Shop & Generics
+  if (endpoint.startsWith('/shop/search')) {
+    return { success: true, data: { results: DEMO_SHOP_PRODUCTS } };
+  }
+
+  if (endpoint.startsWith('/shop/generics')) {
+    return {
+      success: true,
+      data: {
+        alternatives: [
+          {
+            _id: 'gen-01',
+            brand_name: 'Paracetamol IP Generic',
+            manufacturer: 'Jan Aushadhi',
+            price: 12.00,
+            original_price: 32.50,
+            savings_percentage: 63
+          }
+        ]
+      }
+    };
+  }
+
+  // Orders
+  if (endpoint.startsWith('/orders')) {
+    if (method === 'POST') {
+      const parsed = options.body ? JSON.parse(options.body) : {};
+      const newOrder = {
+        _id: 'ord-' + Date.now(),
+        items: parsed.items || [{ name: 'Dolo 650', quantity: 1, price: 32.50 }],
+        totalAmount: 32.50,
+        status: 'placed',
+        createdAt: new Date().toISOString()
+      };
+      cachedOrders.unshift(newOrder);
+      return { success: true, data: { order: newOrder } };
+    }
+    return { success: true, data: { orders: cachedOrders.length > 0 ? cachedOrders : [
+      {
+        _id: 'ord-prev-1',
+        items: [{ name: 'Telma 40', quantity: 1, price: 185.00 }],
+        totalAmount: 185.00,
+        status: 'delivered',
+        createdAt: new Date(Date.now() - 3 * 86400000).toISOString()
+      }
+    ] } };
+  }
+
+  return { success: true, data: {} };
+}
+
+export async function getEffectiveApiUrl() {
+  try {
+    const custom = await storage.getItem('meditrace_server_url');
+    if (custom && custom.trim().length > 0) return custom.trim();
+  } catch (_e) {}
+  return API_BASE_URL;
+}
+
+export async function isOfflineMode() {
+  try {
+    const offline = await storage.getItem('meditrace_offline_mode');
+    return offline === 'true';
+  } catch (_e) {
+    return false;
+  }
+}
+
+async function request(endpoint, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+
+  const offline = await isOfflineMode();
+  if (DEMO_MODE || offline) {
+    return handleDemoRequest(method, endpoint, options);
+  }
+
+  const baseUrl = await getEffectiveApiUrl();
+  const url = `${baseUrl}${endpoint}`;
+  const accessToken = await storage.getItem('meditrace_access_token');
+  const profileId = await storage.getItem('meditrace_profile_id');
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {})
+  };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  if (profileId) headers['x-profile-id'] = profileId;
+
+  // AbortController timeout of 1500ms
+  let controller = null;
+  let timeoutId = null;
+  try {
+    if (typeof AbortController !== 'undefined') {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 1500);
+    }
+  } catch (_e) {}
+
+  try {
+    const fetchOptions = {
+      ...options,
+      headers,
+      ...(controller ? { signal: controller.signal } : {})
+    };
+
+    const response = await fetch(url, fetchOptions);
+    if (timeoutId) clearTimeout(timeoutId);
+
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(json.message || `Request failed with status ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return json;
+  } catch (_e) {
+    if (timeoutId) clearTimeout(timeoutId);
+    // If backend connection times out, fails, or phone is offline, provide graceful fallback
+    return handleDemoRequest(method, endpoint, options);
+  }
+}
+
+export const mobileClient = {
+  get: (endpoint) => request(endpoint, { method: 'GET' }),
+  post: (endpoint, body) => request(endpoint, { method: 'POST', body: JSON.stringify(body) }),
+  put: (endpoint, body) => request(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
+  delete: (endpoint) => request(endpoint, { method: 'DELETE' }),
+
+  getEffectiveApiUrl,
+  isOfflineMode,
+
+  setServerUrl: async (url) => {
+    if (url && url.trim().length > 0) {
+      await storage.setItem('meditrace_server_url', url.trim());
+    } else {
+      await storage.removeItem('meditrace_server_url');
+    }
+  },
+
+  setOfflineMode: async (offline) => {
+    await storage.setItem('meditrace_offline_mode', offline ? 'true' : 'false');
+  },
+
+  testConnection: async (targetUrl) => {
+    const url = (targetUrl || await getEffectiveApiUrl()) + '/health';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      return res.ok;
+    } catch (_e) {
+      clearTimeout(timeout);
+      return false;
+    }
+  }
+};
+
+export default mobileClient;
